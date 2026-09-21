@@ -1,35 +1,12 @@
-# ============================================================
-# 野人动态监控 · 云端保活心跳
-# ============================================================
-# 作用：定时敲一次监控服务的免鉴权探针，防止云沙箱因
-#       “长时间无入站流量”被平台回收，导致早盘动态延迟推送。
-#
-# 放置位置：仓库根目录下  .github/workflows/keepalive.yml
-#
-# 【重要】网址不写在本文件里，而是存在仓库 Secret 中：
-#   仓库页 → Settings → Secrets and variables → Actions
-#   → New repository secret
-#       Name : PING_URL
-#       Value: 你的探针完整地址（形如 https://<服务域名>/api/ping）
-#              ——具体地址见部署说明，切勿写回本文件
-#   这样即使仓库是公开的，别人也看不到你的服务地址。
-#
-# 前置条件：仓库用【Public 公共仓库】——公共仓库的 Actions 免费且
-#           不限时长；私有仓库免费额度只有 2000 分钟/月，按本文件
-#           的频率（每 5 分钟一次）会超支。
-#           Secret 机制对公开仓库同样安全：别人 fork 你的仓库跑
-#           workflow 也拿不到你的 Secret。
-# ============================================================
-
 name: keepalive
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # 每 5 分钟一次（GitHub 允许的最短间隔）
-  workflow_dispatch:        # 同时支持在 Actions 页面手动点一下测试
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 permissions:
-  contents: write           # 仅供下方“保活提交”使用
+  contents: write
 
 jobs:
   ping:
@@ -40,11 +17,19 @@ jobs:
           PING_URL: ${{ secrets.PING_URL }}
         run: |
           if [ -z "$PING_URL" ]; then
-            echo "::error::未配置 PING_URL 密钥，请到 Settings → Secrets and variables → Actions 添加"
+            echo "::error::未配置 PING_URL 密钥"
             exit 1
           fi
+          echo "URL 长度: ${#PING_URL}"
+          HOST=$(echo "$PING_URL" | sed -E 's|https?://([^/]+).*|\1|')
+          echo "目标主机: $HOST"
+          echo "--- DNS 解析 ---"
+          getent hosts "$HOST" || echo "(getent 无结果)"
+          echo "--- curl 详细过程 ---"
+          curl -sS -v -o /dev/null --max-time 25 "$PING_URL" 2>&1 | tail -25 || true
+          echo "--- 最终判定 ---"
           code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 "$PING_URL")
-          echo "ping -> HTTP $code"
+          echo "HTTP code=$code"
           test "$code" = "200"
 
       - uses: actions/checkout@v4
@@ -63,4 +48,3 @@ jobs:
           else
             echo "非保活时段，跳过提交（正常）"
           fi
-
