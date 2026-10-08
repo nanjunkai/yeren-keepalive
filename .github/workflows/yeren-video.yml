@@ -1,0 +1,53 @@
+name: yeren-video-watch
+
+# 补齐监控盲区：公开接口只给文字动态，视频帖必须用真浏览器抓
+# 这个 workflow 每 15 分钟渲染一次博主主页，截获接口响应，把新视频推送到飞书
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:          # 支持手动触发，方便首次验证
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yeren-video-watch
+  cancel-in-progress: false   # 只保留 1 个运行 + 1 个排队，避免并发刷屏
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 去重状态持久化（记录已推过的视频 id，防止重复推送）
+      - name: Restore seen state
+        uses: actions/cache@v4
+        with:
+          path: state
+          key: yeren-video-${{ github.run_id }}
+          restore-keys: |
+            yeren-video-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install playwright
+        run: pip install --quiet playwright
+
+      - name: Fetch videos and push to Feishu
+        env:
+          FEISHU_HOOK: ${{ secrets.FEISHU_HOOK }}
+          PW_CHANNEL: chrome          # 用 runner 预装的 Chrome，省去下载 chromium
+        run: python watch_video.py
+
+      - name: Save seen state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: yeren-video-${{ github.run_id }}
