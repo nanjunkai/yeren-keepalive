@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:          # 支持手动触发，方便验证
+    inputs:
+      hours:
+        description: '只推最近 N 小时（留空 = 按去重状态增量）'
+        required: false
+        default: ''
 
 permissions:
   contents: write             # 用于把去重状态提交回仓库
@@ -44,7 +49,13 @@ jobs:
           PW_CHANNEL: chrome        # 用 runner 预装的 Chrome，省去下载 chromium
           ASR_MODEL: medium         # 识别质量 vs 速度的折中；想快可换 small
           MAX_ASR_PER_RUN: '3'      # 单轮最多转写几条，防止补推时把 job 拖超时
-        run: python watch_video.py
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.hours }}" ]; then
+            ARGS="--hours ${{ inputs.hours }}"
+          fi
+          echo "run: python watch_video.py $ARGS"
+          python watch_video.py $ARGS
 
       # 去重状态回写仓库：比 actions/cache 更持久（cache 会被驱逐，导致重复推送）
       - name: Persist seen state
