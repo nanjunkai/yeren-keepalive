@@ -41,7 +41,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install deps
-        run: pip install --quiet playwright faster-whisper
+        run: |
+          pip install --quiet playwright faster-whisper
+          # ⚠️ faster-whisper 的依赖声明只写 av>=11，但它实际调用
+          # av.open(..., metadata_errors=...) 需要 PyAV>=12。
+          # runner 上若残留旧版 av 会报 "open() got an unexpected keyword argument 'metadata_errors'"
+          pip install --quiet --upgrade "av>=12.0"
+          python -c "import av, faster_whisper; print('av', av.__version__, '| faster-whisper', faster_whisper.__version__)"
 
       - name: Fetch videos, transcribe, push to Feishu
         env:
