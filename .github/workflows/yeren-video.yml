@@ -1,15 +1,16 @@
 name: yeren-video-watch
 
-# 补齐监控盲区：公开接口只给文字动态，视频帖必须用真浏览器抓
-# 这个 workflow 每 15 分钟渲染一次博主主页，截获接口响应，把新视频推送到飞书
+# 补齐监控盲区：公开接口只给文字动态，视频帖（sns_post_*）必须用真浏览器抓
+# 每 15 分钟渲染一次博主主页，截获 get_by_uid 响应，
+# 再把新视频的口播用 faster-whisper 转成文字，一起推送到飞书
 
 on:
   schedule:
     - cron: '*/15 * * * *'
-  workflow_dispatch:          # 支持手动触发，方便首次验证
+  workflow_dispatch:          # 支持手动触发，方便验证
 
 permissions:
-  contents: read
+  contents: write             # 用于把去重状态提交回仓库
 
 concurrency:
   group: yeren-video-watch
@@ -18,36 +19,43 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30       # 转写是 CPU 活，留足时间
 
     steps:
       - uses: actions/checkout@v4
 
-      # 去重状态持久化（记录已推过的视频 id，防止重复推送）
-      - name: Restore seen state
+      # whisper 模型权重缓存（约 1.5GB，避免每次重新下载）
+      - name: Restore whisper cache
         uses: actions/cache@v4
         with:
-          path: state
-          key: yeren-video-${{ github.run_id }}
-          restore-keys: |
-            yeren-video-
+          path: ~/.cache/huggingface
+          key: hf-whisper-medium-v1
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install playwright
-        run: pip install --quiet playwright
+      - name: Install deps
+        run: pip install --quiet playwright faster-whisper
 
-      - name: Fetch videos and push to Feishu
+      - name: Fetch videos, transcribe, push to Feishu
         env:
           FEISHU_HOOK: ${{ secrets.FEISHU_HOOK }}
-          PW_CHANNEL: chrome          # 用 runner 预装的 Chrome，省去下载 chromium
+          PW_CHANNEL: chrome        # 用 runner 预装的 Chrome，省去下载 chromium
+          ASR_MODEL: medium         # 识别质量 vs 速度的折中；想快可换 small
+          MAX_ASR_PER_RUN: '3'      # 单轮最多转写几条，防止补推时把 job 拖超时
         run: python watch_video.py
 
-      - name: Save seen state
+      # 去重状态回写仓库：比 actions/cache 更持久（cache 会被驱逐，导致重复推送）
+      - name: Persist seen state
         if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: state
-          key: yeren-video-${{ github.run_id }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- state/seen_video.json; then
+            git add state/seen_video.json
+            git commit -m "chore: update seen state [skip ci]"
+            git push
+          else
+            echo "seen state unchanged"
+          fi
