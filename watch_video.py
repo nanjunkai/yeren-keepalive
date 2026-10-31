@@ -258,6 +258,7 @@ def main():
         return 0
 
     ok, done = 0, 0
+    delivered = set()
     for v in todo:
         body = ""
         if v["id"] in asr_ids and v["mp4"]:
@@ -275,12 +276,15 @@ def main():
             st = push(compose(v, body), hook)
             print(f"[+] {v['time']} {v['title'][:28]} -> HTTP {st}")
             ok += 1
+            if v["id"]:
+                delivered.add(v["id"])
         except Exception as e:                     # noqa: BLE001
             print(f"[!] 推送失败 {v['id']}: {e}", file=sys.stderr)
         time.sleep(1.0)
 
     if not a.hours:                                # 记录所有已见视频，防重复
-        new_ids = {v["id"] for v in items if v["is_video"]} - seen
+        # 只记录推送成功的视频；失败的条目留到下一轮重试，避免永久漏推。
+        new_ids = delivered - seen
         if new_ids:
             seen.update(new_ids)
             save_seen(a.state, seen)
