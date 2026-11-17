@@ -85,7 +85,20 @@ def fetch_contents(timeout_ms=60000, settle_ms=9000):
         page = ctx.new_page()
         page.on("response",
                 lambda r: responses.append(r) if "get_by_uid" in r.url else None)
-        page.goto(PAGE_URL, wait_until="domcontentloaded", timeout=timeout_ms)
+        # GitHub runner 偶尔打不开同花顺主页（net::ERR_TIMED_OUT），纯网络抖动。
+        # 原来只试一次就抛异常，直接判 workflow 失败 → 每次抖动都发一封失败邮件。
+        # 2026-11-16 实测：同一次提交前 7 次成功、第 8 次超时。加重试即可吸收。
+        for attempt in range(1, 4):
+            try:
+                page.goto(PAGE_URL, wait_until="domcontentloaded",
+                          timeout=timeout_ms)
+                break
+            except Exception as e:                      # noqa: BLE001
+                print(f"打开主页失败（第 {attempt}/3 次）: "
+                      f"{type(e).__name__}: {str(e)[:120]}", flush=True)
+                if attempt == 3:
+                    raise
+                page.wait_for_timeout(5000 * attempt)   # 5s / 10s 后再试
         page.wait_for_timeout(settle_ms)          # 等接口返回 + 首屏渲染
         payloads = []
         for r in responses:                        # 必须在 page 存活时解析
